@@ -8,8 +8,6 @@
 
 #include "file_handling.h"
 
-#include "UartRingbuffer.h"
-
 FATFS fs;  // file system
 FIL fil; // File
 FILINFO fno;
@@ -21,44 +19,53 @@ FATFS *pfs;
 DWORD fre_clust;
 uint32_t total, free_space;
 
-char buffer[BUFFER_SIZE];  // to store strings..
-char path[PATH_SIZE];  // buffer to store path
+static char *buffer;  // pointer to store strings..
+static uint16_t buffer_size;
+static char *path;  // buffer to store path
+static uint16_t path_size;
+static presult _presult;
+static perr _perr;
 
 int i = 0;
 
-int bufsize(char *buf) {
+static void notify_result_to_user(char *str_result) {
+	if (_presult != NULL) _presult(str_result);
+}
+
+static void notify_error_to_user(char *str_error) {
+	if (_perr != NULL) _perr(str_error);
+}
+
+int fhl_get_content_length(char *buf) {
 	int i = 0;
 	while (*buf++ != '\0')
 		i++;
 	return i;
 }
 
-void clear_buffer(void) {
-	for (int i = 0; i < BUFFER_SIZE; i++)
-		buffer[i] = '\0';
+int wait_until(char *str, char *buf) {
+	return 0;
 }
 
-void clear_path(void) {
-	for (int i = 0; i < PATH_SIZE; i++)
-		path[i] = '\0';
+static void fhl_clear_buffer(void) {
+	if (buffer_size == 0) while (1);
+	memset(buffer, 0, buffer_size);
 }
 
-void send_uart(char *string) {
-//	uint8_t len = strlen ((const char *) string);
-//	HAL_UART_Transmit(&huart1, (uint8_t *) string, len, 2000);
-	Uart_sendstring(string);
-	clear_buffer();
+static void fhl_clear_path(void) {
+	if (path_size == 0) while (1);
+	memset(path, 0, path_size);
 }
 
-int cmdlength(char *str) {
+int fhl_cmdlength(char *str) {
 	int i = 0;
 	while (*str++ != ' ')
 		i++;
 	return i;
 }
-void get_path(void) {
-	int start = cmdlength(buffer) + 1;
-	int end = bufsize(buffer) - 2;
+void fhl_get_path(void) {
+	int start = fhl_cmdlength(buffer) + 1;
+	int end = fhl_get_content_length(buffer) - 2;
 
 	int j = 0;
 	for (int i = start; i < end; i++) {
@@ -69,28 +76,28 @@ void get_path(void) {
 	}
 }
 
-void mount_sd(void) {
+void fhl_mount_sd(void) {
 	fresult = f_mount(&fs, "/", 1);
 	if (fresult != FR_OK)
-		send_uart("error in mounting SD CARD...\n");
+		notify_error_to_user("error in mounting SD CARD...\n");
 	else
-		send_uart("SD CARD mounted successfully...\n");
+		notify_result_to_user("SD CARD mounted successfully...\n");
 }
 
-void unmount_sd(void) {
+void fhl_unmount_sd(void) {
 	fresult = f_mount(NULL, "/", 1);
 	if (fresult == FR_OK)
-		send_uart("SD CARD UNMOUNTED successfully...\n");
+		notify_result_to_user("SD CARD UNMOUNTED successfully...\n");
 	else
-		send_uart("error!!! in UNMOUNTING SD CARD\n");
+		notify_error_to_user("error!!! in UNMOUNTING SD CARD\n");
 }
 
 /* Start node to be scanned (***also used as work area***) */
-FRESULT scan_files(char *pat) {
+FRESULT fhl_scan_files(char *pat) {
 	DIR dir;
 	UINT i;
 
-	char path[20];
+	char path[_MAX_LFN + 2];
 	sprintf(path, "%s", pat);
 
 	fresult = f_opendir(&dir, path); /* Open the directory */
@@ -102,16 +109,16 @@ FRESULT scan_files(char *pat) {
 			{
 				if (!(strcmp("SYSTEM~1", fno.fname))) continue;
 				sprintf(buffer, "Dir: %s\r\n", fno.fname);
-				send_uart(buffer);
+				notify_result_to_user(buffer);
 				i = strlen(path);
 				sprintf(&path[i], "/%s", fno.fname);
-				fresult = scan_files(path); /* Enter the directory */
+				fresult = fhl_scan_files(path); /* Enter the directory */
 				if (fresult != FR_OK) break;
 				path[i] = 0;
 			}
 			else { /* It is a file. */
 				sprintf(buffer, "File: %s/%s\n", path, fno.fname);
-				send_uart(buffer);
+				notify_result_to_user(buffer);
 			}
 		}
 		f_closedir(&dir);
@@ -119,13 +126,13 @@ FRESULT scan_files(char *pat) {
 	return fresult;
 }
 
-void write_file(char *name) {
+void fhl_write_file(char *name) {
 
 	/**** check whether the file exists or not ****/
 	fresult = f_stat(name, &fno);
 	if (fresult != FR_OK) {
 		sprintf(buffer, "*%s* does not exists\n", name);
-		send_uart(buffer);
+		notify_error_to_user(buffer);
 	}
 
 	else {
@@ -133,184 +140,210 @@ void write_file(char *name) {
 		fresult = f_open(&fil, name, FA_OPEN_EXISTING | FA_WRITE);
 		if (fresult != FR_OK) {
 			sprintf(buffer, "error no %d in opening file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 
 		else {
 			sprintf(buffer, "file *%s* is opened. Now enter the string you want to write\n", name);
-			send_uart(buffer);
+			notify_result_to_user(buffer);
 		}
 
 		while (!(wait_until("\r\n", buffer)));
 
 		/* Writing text */
 
-		fresult = f_write(&fil, buffer, bufsize(buffer), &bw);
+		fresult = f_write(&fil, buffer, fhl_get_content_length(buffer), &bw);
 
 		if (fresult != FR_OK) {
-			clear_buffer();
+			fhl_clear_buffer();
 			sprintf(buffer, "error no %d in writing file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 
 		else {
-			clear_buffer();
+			fhl_clear_buffer();
 			sprintf(buffer, "*%s* written successfully\n", name);
-			send_uart(buffer);
+			notify_result_to_user(buffer);
 		}
 
 		/* Close file */
 		fresult = f_close(&fil);
 		if (fresult != FR_OK) {
 			sprintf(buffer, "error no %d in closing file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 	}
 }
 
-void read_file(char *name) {
+void fhl_read_file(char *name) {
 	/**** check whether the file exists or not ****/
 	fresult = f_stat(name, &fno);
 	if (fresult != FR_OK) {
 		sprintf(buffer, "*%s* does not exists\n", name);
-		send_uart(buffer);
+		notify_error_to_user(buffer);
 	}
-
 	else {
 		/* Open file to read */
 		fresult = f_open(&fil, name, FA_READ);
-
+		if (f_size(&fil) > buffer_size) {
+			notify_error_to_user("Err: file size is bigger than buffer size");
+			return;
+		}
 		if (fresult != FR_OK) {
 			sprintf(buffer, "error no %d in opening file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 
 		/* Read data from the file
 		 * see the function details for the arguments */
 		sprintf(buffer, "reading data from the file *%s*\n", name);
-		send_uart(buffer);
+		notify_result_to_user(buffer);
 
 		fresult = f_read(&fil, buffer, f_size(&fil), &br);
 		if (fresult != FR_OK) {
-			clear_buffer();
+			fhl_clear_buffer();
 			sprintf(buffer, "error no %d in reading file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 
 		else
-			send_uart(buffer);
+			notify_result_to_user(buffer);
 
 		/* Close file */
 		fresult = f_close(&fil);
 		if (fresult != FR_OK) {
 			sprintf(buffer, "error no %d in closing file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 	}
 }
 
-void create_file(char *name) {
+void fhl_create_file(char *name) {
 	fresult = f_stat(name, &fno);
 	if (fresult == FR_OK) {
 		sprintf(buffer, "*%s* already exists!!!!\n", name);
-		send_uart(buffer);
+		notify_result_to_user(buffer);
 	}
 	else {
 		fresult = f_open(&fil, name, FA_CREATE_ALWAYS | FA_READ | FA_WRITE);
 		if (fresult != FR_OK) {
 			sprintf(buffer, "error no %d in creating file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 		else {
 			sprintf(buffer, "*%s* created successfully\n", name);
-			send_uart(buffer);
+			notify_result_to_user(buffer);
 		}
 
 		fresult = f_close(&fil);
 		if (fresult != FR_OK) {
 			sprintf(buffer, "error no %d in closing file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 	}
 }
 
-void remove_file(char *name) {
+void fhl_remove_file(char *name) {
 	/**** check whether the file exists or not ****/
 	fresult = f_stat(name, &fno);
 	if (fresult != FR_OK) {
 		sprintf(buffer, "*%s* does not exists\n", name);
-		send_uart(buffer);
+		notify_error_to_user(buffer);
 	}
 
 	else {
 		fresult = f_unlink(name);
 		if (fresult == FR_OK) {
 			sprintf(buffer, "*%s* has been removed successfully\n", name);
-			send_uart(buffer);
+			notify_result_to_user(buffer);
 		}
 
 		else {
 			sprintf(buffer, "error in removing *%s*\n", name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 	}
 
 }
 
-void create_dir(char *name) {
+void fhl_create_dir(char *name) {
 	fresult = f_mkdir(name);
 	if (fresult == FR_OK) {
 		sprintf(buffer, "*%s* has been created successfully\n", name);
-		send_uart(buffer);
+		notify_result_to_user(buffer);
 	}
 	else {
 		sprintf(buffer, "error no %d in creating directory\n", fresult);
-		send_uart(buffer);
+		notify_error_to_user(buffer);
 	}
 }
 
-void check_sd(void) {
+void fhl_check_sd(void) {
 	/* Check free space */
 	f_getfree("", &fre_clust, &pfs);
 
 	total = (uint32_t) ((pfs->n_fatent - 2) * pfs->csize * 0.5);
 	sprintf(buffer, "SD CARD Total Size: \t%lu\n", total);
-	send_uart(buffer);
+	notify_result_to_user(buffer);
 	free_space = (uint32_t) (fre_clust * pfs->csize * 0.5);
 	sprintf(buffer, "SD CARD Free Space: \t%lu\n", free_space);
-	send_uart(buffer);
+	notify_result_to_user(buffer);
 }
 
-void check_file(char *name) {
+FRESULT fhl_read_stream_data(char *name, UINT (*callback_func)(const BYTE*, UINT)) {
+	FRESULT rc;
+	FIL fil;
+	UINT dmy;
+	static uint16_t i = 0;
+	/* Open the audio file in read only mode */
+	rc = f_open(&fil, name, FA_READ);
+	if (rc) return rc;
+
+	/* Repeat until the file pointer reaches end of the file */
+	while (rc == FR_OK && !f_eof(&fil)) {
+
+		/* some processes... */
+
+		/* Fill output stream periodicaly or on-demand */
+		rc = f_forward(&fil, callback_func, 100, &dmy);
+		i++;
+	}
+
+	/* Close the file and return */
+	f_close(&fil);
+	return rc;
+}
+
+void fhl_check_file(char *name) {
 	fresult = f_stat(name, &fno);
 	switch (fresult) {
 	case FR_OK:
 
 		sprintf(buffer, "Below are the details of the *%s* \nSize: %lu\n", name, fno.fsize);
-		send_uart(buffer);
+		notify_result_to_user(buffer);
 		sprintf(buffer, "Timestamp: %u/%02u/%02u, %02u:%02u\n", (fno.fdate >> 9) + 1980, fno.fdate >> 5 & 15, fno.fdate & 31, fno.ftime >> 11, fno.ftime >> 5 & 63);
-		send_uart(buffer);
+		notify_result_to_user(buffer);
 		sprintf(buffer, "Attributes: %c%c%c%c%c\n", (fno.fattrib & AM_DIR) ? 'D' : '-', (fno.fattrib & AM_RDO) ? 'R' : '-', (fno.fattrib & AM_HID) ? 'H' : '-', (fno.fattrib & AM_SYS) ? 'S' : '-', (fno.fattrib & AM_ARC) ? 'A' : '-');
-		send_uart(buffer);
+		notify_result_to_user(buffer);
 		break;
 
 	case FR_NO_FILE:
 		sprintf(buffer, "*%s* does not exist.\n", name);
-		send_uart(buffer);
+		notify_error_to_user(buffer);
 		break;
 
 	default:
 		sprintf(buffer, "An error occurred. (%d)\n", fresult);
-		send_uart(buffer);
+		notify_error_to_user(buffer);
 	}
 }
 
-void update_file(char *name) {
+void fhl_update_file(char *name) {
 	/**** check whether the file exists or not ****/
 	fresult = f_stat(name, &fno);
 	if (fresult != FR_OK) {
 		sprintf(buffer, "*%s* does not exists\n", name);
-		send_uart(buffer);
+		notify_error_to_user(buffer);
 	}
 
 	else {
@@ -318,37 +351,52 @@ void update_file(char *name) {
 		fresult = f_open(&fil, name, FA_OPEN_APPEND | FA_WRITE);
 		if (fresult != FR_OK) {
 			sprintf(buffer, "error no %d in opening file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 
 		else {
 			sprintf(buffer, "file *%s* is opened. Now enter the string you want to update\n", name);
-			send_uart(buffer);
+			notify_result_to_user(buffer);
 		}
 
 		while (!(wait_until("\r\n", buffer)));
 
 		/* Writing text */
 
-		fresult = f_write(&fil, buffer, bufsize(buffer), &bw);
+		fresult = f_write(&fil, buffer, fhl_get_content_length(buffer), &bw);
 
 		if (fresult != FR_OK) {
-			clear_buffer();
+			fhl_clear_buffer();
 			sprintf(buffer, "error no %d in writing file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 
 		else {
-			clear_buffer();
+			fhl_clear_buffer();
 			sprintf(buffer, "*%s* written successfully\n", name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 
 		/* Close file */
 		fresult = f_close(&fil);
 		if (fresult != FR_OK) {
 			sprintf(buffer, "error no %d in closing file *%s*\n", fresult, name);
-			send_uart(buffer);
+			notify_error_to_user(buffer);
 		}
 	}
+}
+
+void fhl_register_notify_status(void (*presult)(char *str_result)) {
+	_presult = presult;
+}
+
+void fhl_register_notify_error(void (*perr)(char *str_error)) {
+	_perr = perr;
+}
+
+void fhl_init(char *buff, size_t buff_size, char *path_dir, size_t path_dir_size) {
+	buffer = buff;
+	buffer_size = buff_size;
+	path = path_dir;
+	path_size = path_dir_size;
 }
