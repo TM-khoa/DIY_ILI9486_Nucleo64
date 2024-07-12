@@ -27,6 +27,8 @@
 #include "string.h"
 #include <stdio.h>
 #include "fatfs_sd.h"
+#include "file_handling.h"
+#include "ringbuffer.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -61,19 +63,24 @@ uint32_t tftID;
 ILI9486 tft(320, 480);
 uint8_t mx = 0, my = 0, mv = 0, ml = 0;
 TSPoint p;
-uint32_t a;
 uint32_t tickCount = 0;
 uint32_t elapseTime = 0;
 bool touchDetect = false;
+char buffer[1024] = {0};
+char path[300] = {0};
 
-FATFS fs, *pfs;
-FIL file;
-FRESULT fResult;
-char buffer[1024];
+/*********************************************/
+// This procedure reads a bitmap and draws it to the screen
+// its sped up by reading many pixels worth of data at a time
+// instead of just one pixel at a time. increading the buffer takes
+// more RAM but makes the drawing a little faster. 20 pixels' worth
+// is probably a good place
+#define BUFFPIXEL       80                      // must be a divisor of 320 
+#define BUFFPIXEL_X3    240                     // BUFFPIXELx3
 
-UINT br, bw;
-DWORD fre_clust;
-uint32_t total, freeSpace;
+uint32_t __Gnbmp_image_offset = 0;        			// offset
+const int __Gnbmp_height = 480;                 // 480 bmp height
+const int __Gnbmp_width = 320;                 // 320 bmp width
 
 /* USER CODE END PV */
 
@@ -139,26 +146,45 @@ long map(long x, long in_min, long in_max, long out_min, long out_max) {
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// LITTLE ENDIAN!
+uint16_t read16(char *fileName, FSIZE_t readOffset) {
+	FRESULT fresult;
+	uint16_t d = 0;
+	UINT byteRead = 0;
+	fresult = fhl_read_chunk(fileName, (void*) &d, 2, readOffset, &byteRead);
+	if (fresult != FR_OK) d = 0;
+	return d;
+}
+
+// LITTLE ENDIAN!
+uint32_t read32(char *fileName, FSIZE_t readOffset) {
+	FRESULT fresult;
+	uint32_t d = 0;
+	UINT byteRead = 0;
+	fresult = fhl_read_chunk(fileName, (void*) &d, 4, readOffset, &byteRead);
+	if (fresult != FR_OK) d = 0;
+	return d;
+}
+
 void TFT_Init() {
-	uint8_t val = 0x08;
-	val |= my << 7 | mx << 6 | mv << 5 | ml << 4;
 	tft.Reset();
 	tft.Begin();
-	tft.setRotation(0);
-	tft.fillRect(0, 0, 320, 480, WHITE);
-
-//	TFT_CS_ACTIVE;
-//	tft.WriteCommand(0x36);
-//	Write8bit(0x08);
-//	TFT_CS_IDLE;
-
+	tft.setRotation(1);
+	tft.fillRect(0, 0, 320, 480, BLACK);
+	for (uint16_t i = 0; i < 320; i++) {
+		tft.drawFastVLine(0, i, 480, WHITE);
+	}
+	for (uint16_t i = 0; i < 480; i++) {
+		tft.drawFastVLine(i, 0, 320, WHITE);
+	}
 //	tft.setCursor(0, 0);
 //	tft.setTextColor(BLUE);
 //	tft.setTextSize(4);
 //	tft.print((char*) "SpiritBoi\n");
 //	tft.print((char*) "Truong Minh Khoa\n");
 
-	tft.TouchOn();
+//	tft.TouchOn();
 //	testLines(CYAN);
 }
 void TFT_Stuff() {
@@ -190,6 +216,56 @@ void TFT_Stuff() {
 			tft.TouchOff();
 		}
 	}
+}
+
+void SendMessage(char *s) {
+	HAL_UART_Transmit(&huart2, (uint8_t*) s, strlen(s), HAL_MAX_DELAY);
+}
+
+void TestTransferData() {
+	uint32_t readOffset = 0;
+	UINT byteRead = 0;
+	tft.SetAddrWindow(100, 100 + 320, 0, 303);
+	while (fhl_read_chunk((char*) "streamdata.txt", buffer, 1000, readOffset, &byteRead) == FR_OK) {
+		if (byteRead == 0) break;
+		readOffset += byteRead;
+		memset(buffer, 0, strlen(buffer));
+	}
+}
+
+bool BitmapReadHeader(char *fileName) {
+	// read header
+	uint32_t tmp;
+	uint8_t bmpDepth;
+
+	char s[30] = {0};
+	// magic bytes missing
+	if (read16(fileName, 0) != 0x4D42) return false;
+	// offset after magic bytes
+	tmp = read32(fileName, 2);
+	sprintf(s, "Image size:%lu\n", tmp);
+	SendMessage(s);
+	__Gnbmp_image_offset = read32(fileName, 10);
+	sprintf(s, "offset:%lu\n", __Gnbmp_image_offset);
+	SendMessage(s);
+	// read DIB header
+	tmp = read32(fileName, 14);
+	sprintf(s, "Header size:%lu\n", tmp);
+	SendMessage(s);
+	uint32_t bmp_width = read32(fileName, 18);
+	uint32_t bmp_height = read32(fileName, 22);
+	sprintf(s, "Image dimension:%lux%lu\n", bmp_width, bmp_height);
+	SendMessage(s);
+	if (read16(fileName, 26) != 1) return false;
+	bmpDepth = read16(fileName, 28);
+	sprintf(s, "Bit depth:%u\n", bmpDepth);
+	SendMessage(s);
+	if (read32(fileName, 30) != 0) return false;
+	return true;
+}
+
+void BitmapDraw() {
+
 }
 /* USER CODE END 0 */
 
@@ -225,29 +301,19 @@ int main(void) {
 	MX_ADC1_Init();
 	MX_FATFS_Init();
 	/* USER CODE BEGIN 2 */
-	fResult = f_mount(&fs, "", 1);
-	if (fResult != FR_OK) while (1);
-	f_getfree("", &fre_clust, &pfs);
-	total = (uint32_t) ((pfs->n_fatent - 2) * pfs->csize * 0.5);
-	freeSpace = (uint32_t) (fre_clust * pfs->csize * 0.5);
-//	fResult = f_open(&file, "fileTest.txt", FA_OPEN_ALWAYS | FA_READ | FA_WRITE);
-//	f_puts("This is test content\n", &file);
-//	fResult = f_close(&file);
-
-	fResult = f_open(&file, "fileTest.txt", FA_OPEN_EXISTING | FA_WRITE | FA_READ);
-	fResult = f_lseek(&file, file.obj.objsize);
-	f_puts("Update new data to the end of file", &file);
-	fResult = f_close(&file);
-	fResult = f_open(&file, "fileTest.txt", FA_READ);
-	f_gets(buffer, file.obj.objsize, &file);
-	fResult = f_close(&file);
-
+//	TFT_Init();
+	fhl_init(buffer, sizeof(buffer), path, sizeof(path));
+	fhl_register_notify_status(&SendMessage);
+	fhl_register_notify_error(&SendMessage);
+	fhl_mount_sd();
+	fhl_scan_files((char*) "");
+	while (BitmapReadHeader((char*) "ori.bmp") != true);
+//	TestTransferData();
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	while (1) {
-
 	}
 	/* USER CODE END WHILE */
 
