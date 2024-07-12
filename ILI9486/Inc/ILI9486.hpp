@@ -138,7 +138,8 @@ class ILI9486: public Adafruit_GFX, public TouchScreen {
 			return (ret << 8) | lo;
 		}
 	public:
-		// Adafruit_GFX override method
+		/*Start Adafruit_GFX override method */
+
 		ILI9486(int16_t w, int16_t h) : Adafruit_GFX(w, h) {
 		}
 
@@ -191,51 +192,83 @@ class ILI9486: public Adafruit_GFX, public TouchScreen {
 			}
 		}
 
-		void fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color) {
-			volatile int16_t _w = width();
-			volatile int16_t _h = height();
-			// this is portrait
-			int16_t end;
-			if (_w > _h) {
-				int16_t temp = h;
-				h = w;
-				w = temp;
-			}
-			if (w < 0) {
-				w = -w;
-				x -= w;
-			}                           //+ve w
-			end = x + w;
-			if (x < 0) x = 0;
-			if (end > width()) end = width();
-			w = end - x;
-			if (h < 0) {
-				h = -h;
-				y -= h;
-			}                           //+ve h
-			end = y + h;
-			if (y < 0) y = 0;
-			if (end > height()) end = height();
-			h = end - y;
-			if (h > w) {
-				end = h;
-				h = w;
-				w = end;
-			}
-			if (_h > _w)
-				SetAddrWindow(x, x + w - 1, y, y + h - 1);
-			else
-				SetAddrWindow(y, y + h - 1, x, x + w - 1);
+		void drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color) {
 			TFT_CS_ACTIVE;
-			WriteCommand(0x2c);                           // Write to memory
-			while (h-- > 0) {
-				end = w;
-				do {
-					Write16bit(color);
-				} while (--end != 0);
+			if (width() != WIDTH) { // if column and page exchanged
+				int16_t temp = x;
+				x = y;
+				y = temp;
+				// now that x mean y and y mean x
+				WriteCommand(0x2b);
+				Write8bit(x >> 8); //SP[15:8]
+				Write8bit(x); //SP[7:0]
+				Write8bit(h >> 8); //EP[15:8]
+				Write8bit(h); //EP[7:0]
+				WriteCommand(0x2a);
+				Write8bit(y >> 8); //SC[15:8]
+				Write8bit(y); //SC[7:0]
+				Write8bit(y >> 8); //EC[15:8]
+				Write8bit(y); //EC[7:0]
+				WriteCommand(0x2c);
 			}
+			else {
+				WriteCommand(0x2b);
+				Write8bit(x >> 8); //SP[15:8]
+				Write8bit(x); //SP[7:0]
+				Write8bit(x >> 8); //EP[15:8]
+				Write8bit(x); //EP[7:0]
+				WriteCommand(0x2a);
+				Write8bit(y >> 8); //SC[15:8]
+				Write8bit(y); //SC[7:0]
+				Write8bit(h >> 8); //EC[15:8]
+				Write8bit(h); //EC[7:0]
+				WriteCommand(0x2c);
+			}
+			do {
+				Write16bit(color);
+			} while (h-- > 0);
 			TFT_CS_IDLE;
 		}
+
+		void drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color) {
+			TFT_CS_ACTIVE;
+
+			if (width() != WIDTH) { // if column and page exchanged
+				int16_t temp = x;
+				x = y;
+				y = temp;
+				// now that x mean y and y mean x
+				WriteCommand(0x2b);
+				Write8bit(x >> 8); //SP[15:8]
+				Write8bit(x); //SP[7:0]
+				Write8bit(x >> 8); //EP[15:8]
+				Write8bit(x); //EP[7:0]
+				WriteCommand(0x2a);
+				Write8bit(y >> 8); //SC[15:8]
+				Write8bit(y); //SC[7:0]
+				Write8bit(w >> 8); //EC[15:8]
+				Write8bit(w); //EC[7:0]
+				WriteCommand(0x2c);
+			}
+			else {
+				WriteCommand(0x2b);
+				Write8bit(x >> 8); //SP[15:8]
+				Write8bit(x); //SP[7:0]
+				Write8bit(w >> 8); //EP[15:8]
+				Write8bit(w); //EP[7:0]
+				WriteCommand(0x2a);
+				Write8bit(y >> 8); //SC[15:8]
+				Write8bit(y); //SC[7:0]
+				Write8bit(y >> 8); //EC[15:8]
+				Write8bit(y); //EC[7:0]
+				WriteCommand(0x2c);
+			}
+			do {
+				Write16bit(color);
+			} while (w-- > 0);
+			TFT_CS_IDLE;
+		}
+		/*End Adafruit_GFX override method */
 
 		void Begin() {
 			TouchScreen::Begin(ADC1);
@@ -339,7 +372,7 @@ class ILI9486: public Adafruit_GFX, public TouchScreen {
 			WriteCommand(0x29);
 			TFT_CS_IDLE;
 
-			// Memory access control
+			// Memory access control, to rotate, flip
 			TFT_CS_ACTIVE;
 			WriteCommand(0x36);
 			Write8bit(0x48);
@@ -355,15 +388,15 @@ class ILI9486: public Adafruit_GFX, public TouchScreen {
 		void SetAddrWindow(int16_t x0, int16_t x, int16_t y0, int16_t y) {
 			TFT_CS_ACTIVE;
 			WriteCommand(0x2b);
-			Write8bit(x0 >> 8);
-			Write8bit(x0);
-			Write8bit(x >> 8);
-			Write8bit(x);
+			Write8bit(x0 >> 8); //SP[15:8]
+			Write8bit(x0); //SP[7:0]
+			Write8bit(x >> 8); //EP[15:8]
+			Write8bit(x); //EP[7:0]
 			WriteCommand(0x2a);
-			Write8bit(y0 >> 8);
-			Write8bit(y0);
-			Write8bit(y >> 8);
-			Write8bit(y);
+			Write8bit(y0 >> 8); //SC[15:8]
+			Write8bit(y0); //SC[7:0]
+			Write8bit(y >> 8); //EC[15:8]
+			Write8bit(y); //EC[7:0]
 			TFT_CS_IDLE;
 		}
 
@@ -399,6 +432,7 @@ class ILI9486: public Adafruit_GFX, public TouchScreen {
 			}
 
 		}
+
 		uint32_t ReadID() {
 			uint32_t ret;
 			TFT_CS_ACTIVE;
