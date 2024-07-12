@@ -82,6 +82,8 @@ void fhl_check_file(char *name);
  */
 void fhl_update_file(char *name);
 
+FRESULT fhl_read_chunk(char *name, void *out_buffer, UINT byte_to_read, FSIZE_t read_offset, UINT *byte_read);
+
 FRESULT fhl_read_stream_data(char *name, UINT (*callback_func)(const BYTE*, UINT));
 
 /**

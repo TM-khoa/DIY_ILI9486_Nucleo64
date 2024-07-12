@@ -27,7 +27,7 @@ static presult _presult;
 static perr _perr;
 
 int i = 0;
-
+static int wait_until(char *str, char *buf);
 static void notify_result_to_user(char *str_result) {
 	if (_presult != NULL) _presult(str_result);
 }
@@ -36,33 +36,11 @@ static void notify_error_to_user(char *str_error) {
 	if (_perr != NULL) _perr(str_error);
 }
 
-int fhl_get_content_length(char *buf) {
-	int i = 0;
-	while (*buf++ != '\0')
-		i++;
-	return i;
-}
-
-int wait_until(char *str, char *buf) {
-	return 0;
-}
-
 static void fhl_clear_buffer(void) {
 	if (buffer_size == 0) while (1);
 	memset(buffer, 0, buffer_size);
 }
 
-static void fhl_clear_path(void) {
-	if (path_size == 0) while (1);
-	memset(path, 0, path_size);
-}
-
-int fhl_cmdlength(char *str) {
-	int i = 0;
-	while (*str++ != ' ')
-		i++;
-	return i;
-}
 void fhl_get_path(void) {
 	int start = fhl_cmdlength(buffer) + 1;
 	int end = fhl_get_content_length(buffer) - 2;
@@ -74,22 +52,6 @@ void fhl_get_path(void) {
 		else
 			break;
 	}
-}
-
-void fhl_mount_sd(void) {
-	fresult = f_mount(&fs, "/", 1);
-	if (fresult != FR_OK)
-		notify_error_to_user("error in mounting SD CARD...\n");
-	else
-		notify_result_to_user("SD CARD mounted successfully...\n");
-}
-
-void fhl_unmount_sd(void) {
-	fresult = f_mount(NULL, "/", 1);
-	if (fresult == FR_OK)
-		notify_result_to_user("SD CARD UNMOUNTED successfully...\n");
-	else
-		notify_error_to_user("error!!! in UNMOUNTING SD CARD\n");
 }
 
 /* Start node to be scanned (***also used as work area***) */
@@ -183,12 +145,12 @@ void fhl_read_file(char *name) {
 		notify_error_to_user(buffer);
 	}
 	else {
-		/* Open file to read */
-		fresult = f_open(&fil, name, FA_READ);
 		if (f_size(&fil) > buffer_size) {
 			notify_error_to_user("Err: file size is bigger than buffer size");
 			return;
 		}
+		/* Open file to read */
+		fresult = f_open(&fil, name, FA_READ);
 		if (fresult != FR_OK) {
 			sprintf(buffer, "error no %d in opening file *%s*\n", fresult, name);
 			notify_error_to_user(buffer);
@@ -290,6 +252,49 @@ void fhl_check_sd(void) {
 	notify_result_to_user(buffer);
 }
 
+FRESULT fhl_read_chunk(char *name, void *out_buffer, UINT byte_to_read, FSIZE_t read_offset, UINT *byte_read) {
+	/**** check whether the file exists or not ****/
+	fresult = f_stat(name, &fno);
+	if (fresult != FR_OK) {
+		sprintf(buffer, "*%s* does not exists\n", name);
+		notify_error_to_user(buffer);
+	}
+	else {
+		/* Open file to read */
+		fresult = f_open(&fil, name, FA_READ);
+		if (fresult != FR_OK) {
+			sprintf(buffer, "error no %d in opening file *%s*\n", fresult, name);
+			notify_error_to_user(buffer);
+		}
+
+		FSIZE_t fsize = f_size(&fil);
+		if (fsize < read_offset) {
+			sprintf(buffer, "error read offset invalid");
+			notify_error_to_user(buffer);
+			return FR_INVALID_PARAMETER;
+		}
+		UINT valid_read_size = (fsize < (read_offset + byte_to_read)) ? fsize - read_offset : byte_to_read;
+		fresult = f_lseek(&fil, read_offset);
+		if (fresult != FR_OK) {
+			sprintf(buffer, "error no %d in set offset read *%s*\n", fresult, name);
+			notify_error_to_user(buffer);
+		}
+		fresult = f_read(&fil, out_buffer, valid_read_size, byte_read);
+		if (valid_read_size < byte_to_read && f_eof(&fil) == 0) notify_error_to_user("Read end but not EOF");
+		if (fresult != FR_OK) {
+			sprintf(buffer, "error no %d in read *%s*\n", fresult, name);
+			notify_error_to_user(buffer);
+		}
+	}
+	/* Close file */
+	fresult = f_close(&fil);
+	if (fresult != FR_OK) {
+		sprintf(buffer, "error no %d in closing file *%s*\n", fresult, name);
+		notify_error_to_user(buffer);
+	}
+	return fresult;
+}
+
 FRESULT fhl_read_stream_data(char *name, UINT (*callback_func)(const BYTE*, UINT)) {
 	FRESULT rc;
 	FIL fil;
@@ -384,6 +389,47 @@ void fhl_update_file(char *name) {
 			notify_error_to_user(buffer);
 		}
 	}
+}
+
+int fhl_get_content_length(char *buf) {
+	int i = 0;
+	while (*buf++ != '\0')
+		i++;
+	return i;
+}
+
+int wait_until(char *str, char *buf) {
+	return 0;
+}
+
+static void fhl_clear_path(void) {
+	if (path_size == 0) while (1);
+	memset(path, 0, path_size);
+}
+
+int fhl_cmdlength(char *str) {
+	int i = 0;
+	while (*str++ != ' ')
+		i++;
+	return i;
+}
+
+void fhl_mount_sd(void) {
+	fresult = f_mount(&fs, "/", 1);
+	if (fresult != FR_OK)
+		notify_error_to_user("error in mounting SD CARD...\n");
+	else
+		notify_result_to_user("SD CARD mounted successfully...\n");
+}
+
+void fhl_unmount_sd(void) {
+	fresult = f_mount(NULL, "/", 1);
+	if (fresult == FR_OK)
+		notify_result_to_user("SD CARD UNMOUNTED successfully...\n");
+	else
+		notify_error_to_user("error!!! in UNMOUNTING SD CARD\n");
+	fhl_clear_path();
+	fhl_clear_buffer();
 }
 
 void fhl_register_notify_status(void (*presult)(char *str_result)) {
