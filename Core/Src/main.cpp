@@ -259,6 +259,7 @@ bool BitmapReadHeader(char *fileName) {
 }
 
 void BitmapDraw(char *fileName) {
+	uint32_t renderTime = HAL_GetTick();
 	uint8_t sdbuffer[BUFFPIXEL_X3];
 	UINT byteRead = 0;
 	uint32_t alreadyRead = 0;
@@ -292,6 +293,9 @@ void BitmapDraw(char *fileName) {
 			TFT_CS_IDLE;
 		}
 	}
+	char s[20] = {0};
+	sprintf(s, "renderTime:%lu", HAL_GetTick() - renderTime);
+	SendMessage(s);
 }
 /* USER CODE END 0 */
 
