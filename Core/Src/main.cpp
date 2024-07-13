@@ -61,7 +61,6 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 uint32_t tftID;
 ILI9486 tft(320, 480);
-uint8_t mx = 0, my = 0, mv = 0, ml = 0;
 TSPoint p;
 uint32_t tickCount = 0;
 uint32_t elapseTime = 0;
@@ -75,7 +74,7 @@ char path[300] = {0};
 // instead of just one pixel at a time. increading the buffer takes
 // more RAM but makes the drawing a little faster. 20 pixels' worth
 // is probably a good place
-#define BUFFPIXEL       80                      // must be a divisor of 320 
+#define BUFFPIXEL       80                      // must be a divisor of 320
 #define BUFFPIXEL_X3    240                     // BUFFPIXELx3
 
 uint32_t __Gnbmp_image_offset = 0;        			// offset
@@ -170,14 +169,8 @@ uint32_t read32(char *fileName, FSIZE_t readOffset) {
 void TFT_Init() {
 	tft.Reset();
 	tft.Begin();
-	tft.setRotation(1);
-	tft.fillRect(0, 0, 320, 480, BLACK);
-	for (uint16_t i = 0; i < 320; i++) {
-		tft.drawFastVLine(0, i, 480, WHITE);
-	}
-	for (uint16_t i = 0; i < 480; i++) {
-		tft.drawFastVLine(i, 0, 320, WHITE);
-	}
+	tft.setRotation(3);
+	tft.fillRect(0, 0, 480, 320, BLACK);
 //	tft.setCursor(0, 0);
 //	tft.setTextColor(BLUE);
 //	tft.setTextSize(4);
@@ -264,8 +257,30 @@ bool BitmapReadHeader(char *fileName) {
 	return true;
 }
 
-void BitmapDraw() {
+void BitmapDraw(char *fileName) {
+	uint8_t sdbuffer[BUFFPIXEL_X3];
+	UINT byteRead = 0;
+	uint32_t alreadyRead = 0;
+	for (int i = 0; i < __Gnbmp_height; i++) {
+		for (int j = 0; j < (__Gnbmp_width / BUFFPIXEL); j++) {
+			fhl_read_chunk(fileName, sdbuffer, BUFFPIXEL_X3, __Gnbmp_image_offset + alreadyRead, &byteRead);
+			if (byteRead == 0) return;
+			alreadyRead += byteRead;
+			uint8_t buffidx = 0;
+			int offset_x = j * BUFFPIXEL;
+			unsigned int __color[BUFFPIXEL];
+			for (int k = 0; k < BUFFPIXEL; k++) {
+				__color[k] = sdbuffer[buffidx + 2] >> 3;                        // red
+				__color[k] = __color[k] << 6 | (sdbuffer[buffidx + 1] >> 2);      // green
+				__color[k] = __color[k] << 5 | (sdbuffer[buffidx + 0] >> 3);      // blue
 
+				buffidx += 3;
+			}
+			for (int m = 0; m < BUFFPIXEL; m++) {
+				tft.drawPixel(m + offset_x, i, __color[m]);
+			}
+		}
+	}
 }
 /* USER CODE END 0 */
 
@@ -301,13 +316,14 @@ int main(void) {
 	MX_ADC1_Init();
 	MX_FATFS_Init();
 	/* USER CODE BEGIN 2 */
-//	TFT_Init();
+	TFT_Init();
 	fhl_init(buffer, sizeof(buffer), path, sizeof(path));
 	fhl_register_notify_status(&SendMessage);
 	fhl_register_notify_error(&SendMessage);
 	fhl_mount_sd();
 	fhl_scan_files((char*) "");
-	while (BitmapReadHeader((char*) "ori.bmp") != true);
+	while (BitmapReadHeader((char*) "ori_resize.bmp") != true);
+	BitmapDraw((char*) "ori_resize.bmp");
 //	TestTransferData();
 	/* USER CODE END 2 */
 
