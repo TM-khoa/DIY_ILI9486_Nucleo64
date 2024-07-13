@@ -91,13 +91,17 @@ GPIOB->BSRR = ((((data) & (1 << 3)) << 0) 	\
  TFT_WR_STROBE;															\
  TFT_WR_IDLE;																\
 }
+
+#define Write16bit(data) { 	\
+			Write8bit(data >> 8);	\
+			Write8bit(data);			\
+}
+
  //@formatter:on
 class ILI9486: public Adafruit_GFX, public TouchScreen {
 	private:
-		static inline void Write16bit(uint16_t data) {
-			Write8bit(data >> 8);
-			Write8bit((uint8_t ) data);
-		}
+		bool _flipY = false;
+		bool _flipX = false;
 
 		void ConfigPortInput() {
 			// Reset all pin of bus 8 lines TFT to 00 (Input mode)
@@ -172,10 +176,9 @@ class ILI9486: public Adafruit_GFX, public TouchScreen {
 				val = 0xF8;             //MY=1, MX=1, MV=1, ML=1, BGR=1
 				break;
 			}
-//			val ^= 0x80; //MY
-//			val ^= 0x40; //MX
+			if (_flipY) val ^= 0x80; //MY
+			if (_flipX) val ^= 0x40; //MX
 //			val ^= 0x20; // MV
-//			val ^= 0x10;// ML
 			TFT_CS_ACTIVE;
 			WriteCommand(0x36);
 			Write8bit(val);
@@ -474,6 +477,13 @@ class ILI9486: public Adafruit_GFX, public TouchScreen {
 			TFT_CS_IDLE;
 			ConfigPortOutput();
 			return ret;
+		}
+
+		void FlipX(bool flip) {
+			_flipX = true;
+		}
+		void FlipY(bool flip) {
+			_flipY = true;
 		}
 
 		void Reset() {
