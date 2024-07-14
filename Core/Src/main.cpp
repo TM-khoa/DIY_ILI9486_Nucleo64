@@ -171,7 +171,7 @@ void TFT_Init() {
 	tft.Begin();
 	tft.FlipY(true);
 	tft.setRotation(0);
-	tft.fillRect(0, 0, 480, 320, BLACK);
+	tft.fillRect(0, 0, 480, 320, WHITE);
 //	tft.setCursor(0, 0);
 //	tft.setTextColor(BLUE);
 //	tft.setTextSize(4);
@@ -259,19 +259,29 @@ bool BitmapReadHeader(char *fileName) {
 }
 
 void BitmapDraw(char *fileName) {
-	uint32_t renderTime = HAL_GetTick();
 	uint8_t sdbuffer[BUFFPIXEL_X3];
 	UINT byteRead = 0;
-	uint32_t alreadyRead = 0;
+	uint64_t alreadyRead = 0;
 	bool continueToWrite = false;
+	unsigned int __color[BUFFPIXEL];
+	FRESULT fresult;
+	FILINFO fno;
+	FIL fil;
+	FSIZE_t fsize = f_size(&fil);
+	fresult = f_stat(fileName, &fno);
+	if (fresult != FR_OK) SendMessage((char*) "Image not exist\n");
+	fresult = f_open(&fil, fileName, FA_READ);
+	if (fresult != FR_OK) SendMessage((char*) "Cannot open image\n");
 	tft.SetAddrWindow(0, 480, 0, 320);
+	uint32_t renderTime = HAL_GetTick();
 	for (int i = 0; i < __Gnbmp_height; i++) {
 		for (int j = 0; j < (__Gnbmp_width / BUFFPIXEL); j++) {
-			fhl_read_chunk(fileName, sdbuffer, BUFFPIXEL_X3, __Gnbmp_image_offset + alreadyRead, &byteRead);
-			if (byteRead == 0) return;
+			fresult = f_lseek(&fil, __Gnbmp_image_offset + alreadyRead);
+			UINT valid_read_size = (fsize < (__Gnbmp_image_offset + alreadyRead)) ? fsize - __Gnbmp_image_offset : BUFFPIXEL_X3;
+			f_read(&fil, sdbuffer, valid_read_size, &byteRead);
+//			fhl_read_chunk(fileName, sdbuffer, BUFFPIXEL_X3, __Gnbmp_image_offset + alreadyRead, &byteRead);
 			alreadyRead += byteRead;
 			uint8_t buffidx = 0;
-			unsigned int __color[BUFFPIXEL];
 			for (int k = 0; k < BUFFPIXEL; k++) {
 				__color[k] = sdbuffer[buffidx + 2] >> 3;                        // red
 				__color[k] = __color[k] << 6 | (sdbuffer[buffidx + 1] >> 2);      // green
@@ -293,8 +303,10 @@ void BitmapDraw(char *fileName) {
 			TFT_CS_IDLE;
 		}
 	}
+	fresult = f_close(&fil);
+	if (fresult != FR_OK) SendMessage((char*) "Cannot close image\n");
 	char s[20] = {0};
-	sprintf(s, "renderTime:%lu", HAL_GetTick() - renderTime);
+	sprintf(s, "renderTime:%lums\n", HAL_GetTick() - renderTime);
 	SendMessage(s);
 }
 /* USER CODE END 0 */
@@ -337,14 +349,19 @@ int main(void) {
 	fhl_register_notify_error(&SendMessage);
 	fhl_mount_sd();
 	fhl_scan_files((char*) "");
-	while (BitmapReadHeader((char*) "ori_resize.bmp") != true);
-	BitmapDraw((char*) "ori_resize.bmp");
+
 //	TestTransferData();
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	while (1) {
+		while (BitmapReadHeader((char*) "ori2.bmp") != true);
+		BitmapDraw((char*) "ori2.bmp");
+		HAL_Delay(2000);
+		while (BitmapReadHeader((char*) "ori_resize.bmp") != true);
+		BitmapDraw((char*) "ori_resize.bmp");
+		HAL_Delay(2000);
 	}
 	/* USER CODE END WHILE */
 
